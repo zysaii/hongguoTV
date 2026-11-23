@@ -449,6 +449,8 @@ class MainActivity : Activity() {
     private lateinit var hud: LinearLayout
     private var seekHint: TextView? = null
     private var persistentBar: ProgressBar? = null
+    private var playerGestureDetector: GestureDetector? = null
+    private var fullUiRotation = 0
     private lateinit var playbackText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var controls: LinearLayout
@@ -3115,7 +3117,7 @@ class MainActivity : Activity() {
                 }
             hud.addView(progressBar, lp(-1, dp(4)))
             hud.addView(
-                text("观看时 ↑ 上一集  ↓ 下一集  ← → 快退/快进\n确认 暂停/继续并打开菜单 · 菜单键 打开菜单", 13f, Color.LTGRAY).apply {
+                text("观看时 ↑ 上一集  ↓ 下一集  ← → 快退/快进\n确认 暂停/继续并打开菜单 · 菜单键 打开菜单 · 触控：单击显隐/双击暂停/滑动快进切集", 13f, Color.LTGRAY).apply {
                     setPadding(0, dp(12), 0, 0)
                 }
             )
@@ -4515,12 +4517,58 @@ class MainActivity : Activity() {
     private fun applyVideoRotation() {
         val view=playerView ?: return
         if(root.width<=0 || root.height<=0) return
-        val canvas=VideoRotation.canvas(root.width,root.height,library.videoRotation)
+        val effDeg = if (fullUiRotation != 0) fullUiRotation else library.videoRotation
+        val canvas=VideoRotation.canvas(root.width,root.height,effDeg)
         val params=view.layoutParams as FrameLayout.LayoutParams
         if(params.width!=canvas.width || params.height!=canvas.height) {
             params.width=canvas.width; params.height=canvas.height; params.gravity=Gravity.CENTER; view.layoutParams=params
         }
-        view.rotation=library.videoRotation.toFloat()
+        view.rotation=effDeg.toFloat()
+        if (fullUiRotation != 0) {
+            social.applyRotation(fullUiRotation, canvas.width, canvas.height)
+            persistentBar?.let { bar ->
+                val p = bar.layoutParams as? FrameLayout.LayoutParams
+                if (p != null) {
+                    val bw = if (fullUiRotation % 180 != 0) root.height else root.width
+                    if (p.width != bw) {
+                        p.width = bw
+                        p.gravity = Gravity.CENTER
+                        bar.layoutParams = p
+                    }
+                }
+                bar.rotation = fullUiRotation.toFloat()
+            }
+        } else {
+            social.applyRotation(0, root.width, root.height)
+            persistentBar?.let { bar ->
+                val p = bar.layoutParams as? FrameLayout.LayoutParams
+                if (p != null && (p.width != -1 || p.gravity != Gravity.BOTTOM)) {
+                    p.width = -1
+                    p.gravity = Gravity.BOTTOM
+                    bar.layoutParams = p
+                }
+                bar.rotation = 0f
+            }
+        }
+    }
+    private fun showFullRotationPicker(anchor: TextView) {
+        tvTools.choose("全屏旋转 · 画面+弹幕+进度条", VideoRotation.options.map { "${it}°" }, anchor, { index ->
+            val next = VideoRotation.options[index]
+            if (fullUiRotation == next) return@choose
+            val previous = fullUiRotation
+            fullUiRotation = next
+            val rebuild = screen == "player" && playerView != null && VideoRotation.requiresSurfaceRebuild(previous, next)
+            val selectedEpisode = episodeIndex; val position = currentPosition()
+            val autoplay = if (playbackReady) player?.playWhenReady ?: requestedAutoplay else requestedAutoplay
+            val ticket = generation
+            if (rebuild) {
+                main.post {
+                    if (screen == "player" && generation == ticket)
+                        playEpisode(selectedEpisode, position, autoplay, recreateView = true)
+                }
+            } else applyVideoRotation()
+            if (anchor.tag != "playback-settings") anchor.text = "全屏旋转  ·  ${fullUiRotation}°"
+        }, onBack = if (anchor.tag == "playback-settings") ({ showPlaybackSettings(anchor) }) else null)
     }
     private fun showRotationPicker(anchor: TextView) {
         tvTools.choose("画面旋转 · 仅旋转视频",VideoRotation.options.map { "${it}°" },anchor,{ index ->
@@ -4672,6 +4720,7 @@ class MainActivity : Activity() {
             "清晰度 ${library.maxQuality}P", "画面 ${library.frameMode.label}",
             "定时 ${sleepTimer.label()}", "从头播放", "高级设置",
             "画面旋转 ${library.videoRotation}°",
+            "全屏旋转 ${fullUiRotation}°",
             "常驻播放进度 ${if (library.alwaysShowProgress) "开启" else "关闭"}",
         ), anchor, { choice ->
             main.post {
@@ -4682,7 +4731,8 @@ class MainActivity : Activity() {
                     3 -> { seekTo(0); hidePanel() }
                     4 -> showAdvancedPlaybackSettings(anchor)
                     5 -> showRotationPicker(anchor)
-                    6 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
+                    6 -> showFullRotationPicker(anchor)
+                    7 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
                 }
             }
         })
@@ -5018,6 +5068,64 @@ class MainActivity : Activity() {
     override fun onUserInteraction() {
         super.onUserInteraction()
         gradualPreloader?.yieldToUser()
+    }
+
+    private fun setupTouchGestures() {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
+        var isScrolling = false
+        playerGestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean {
+                isScrolling = false
+                return true
+            }
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (screen != "player" || playerModalOpen()) return false
+                if (panel && !playError) {
+                    hidePlaybackOverlay()
+                } else {
+                    showHud()
+                    showPanel()
+                }
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (screen != "player" || playerModalOpen()) return false
+                togglePlayback()
+                return true
+            }
+
+            override fun onScroll(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                distanceX: Float,
+                distanceY: Float,
+            ): Boolean {
+                if (screen != "player" || playerModalOpen() || e1 == null) return false
+                val totalDx = e2.x - e1.x
+                val totalDy = e2.y - e1.y
+                if (!isScrolling && (kotlin.math.abs(totalDx) > touchSlop * 2 || kotlin.math.abs(totalDy) > touchSlop * 2)) {
+                    isScrolling = true
+                    if (kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy)) {
+                        if (totalDx > 0) seek(1, 0) else seek(-1, 0)
+                    } else {
+                        if (totalDy > 0) skipEpisode(1) else skipEpisode(-1)
+                    }
+                    return true
+                }
+                return false
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (screen == "player" && !playerModalOpen()) {
+            if (playerGestureDetector == null) setupTouchGestures()
+            val handled = playerGestureDetector?.onTouchEvent(ev) == true
+            if (handled) return true
+        }
+        return super.dispatchTouchEvent(ev)
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

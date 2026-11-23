@@ -86,6 +86,18 @@ class TvSocial(
         updateOverlayRows()
     }
 
+    fun applyRotation(degrees: Int, canvasWidth: Int, canvasHeight: Int) {
+        val view = overlay ?: return
+        val params = view.layoutParams as? FrameLayout.LayoutParams ?: return
+        if (params.width != canvasWidth || params.height != canvasHeight) {
+            params.width = canvasWidth
+            params.height = canvasHeight
+            params.gravity = Gravity.CENTER
+            view.layoutParams = params
+        }
+        view.rotation = degrees.toFloat()
+    }
+
     fun foreground(value: Boolean) {
         active = value
         main.removeCallbacks(tick)
