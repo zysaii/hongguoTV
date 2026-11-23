@@ -454,6 +454,13 @@ class MainActivity : Activity() {
     private var fullUiRotation: Int
         get() = customPrefs.getInt("fullUiRotation", 0)
         set(value) = customPrefs.edit().putInt("fullUiRotation", value).apply()
+    private var skipIntroSeconds: Int
+        get() = customPrefs.getInt("skipIntroSeconds", 0)
+        set(value) = customPrefs.edit().putInt("skipIntroSeconds", value).apply()
+    private var skipOutroSeconds: Int
+        get() = customPrefs.getInt("skipOutroSeconds", 0)
+        set(value) = customPrefs.edit().putInt("skipOutroSeconds", value).apply()
+    private var skippedOutroForEpisode = -1
     private lateinit var playbackText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var controls: LinearLayout
@@ -538,6 +545,15 @@ class MainActivity : Activity() {
                     if (player?.isPlaying == true && now - lastSaved > 5000) {
                         saveProgress()
                         lastSaved = now
+                    }
+                    player?.let { p ->
+                        if (skipOutroSeconds > 0 && !playError && playbackReady && p.isPlaying && p.duration > 0) {
+                            val remaining = p.duration - p.currentPosition
+                            if (remaining in 1..(skipOutroSeconds * 1000L) && skippedOutroForEpisode != episodeIndex) {
+                                skippedOutroForEpisode = episodeIndex
+                                skipEpisode(1)
+                            }
+                        }
                     }
                 }
                 if (screen != "player") stallGuard.suspendObservation()
@@ -2412,6 +2428,10 @@ class MainActivity : Activity() {
                     rotationButton = setting("画面旋转  ·  ${library.videoRotation}°") { showRotationPicker(rotationButton) }
                     lateinit var fullRotationButton: TextView
                     fullRotationButton = setting("全屏旋转  ·  ${fullUiRotation}°") { showFullRotationPicker(fullRotationButton) }
+                    lateinit var skipIntroBtn: TextView
+                    skipIntroBtn = setting("跳过片头  ·  ${if (skipIntroSeconds == 0) "关闭" else "${skipIntroSeconds} 秒"}") { showSkipIntroPicker(skipIntroBtn) }
+                    lateinit var skipOutroBtn: TextView
+                    skipOutroBtn = setting("跳过片尾  ·  ${if (skipOutroSeconds == 0) "关闭" else "${skipOutroSeconds} 秒"}") { showSkipOutroPicker(skipOutroBtn) }
                     toggle("常驻播放进度", library.alwaysShowProgress) { library.alwaysShowProgress = it }
                     toggle("自动连播", library.autoNext) { library.autoNext = it }
                     toggle("跨季自动连播（需开启自动连播）", library.seasonAutoplay) { library.seasonAutoplay = it }
@@ -3018,7 +3038,9 @@ class MainActivity : Activity() {
         }
         autoRecovery = false
         readySince = 0
-        startPosition = position.coerceAtLeast(0)
+        skippedOutroForEpisode = -1
+        val effPosition = if (position < skipIntroSeconds * 1000L) (skipIntroSeconds * 1000L) else position
+        startPosition = effPosition.coerceAtLeast(0)
         requestedAutoplay = autoplay
         if (autoplay) sleepStopped = false
         screen = "player"
@@ -3320,7 +3342,7 @@ class MainActivity : Activity() {
                 p.addListener(listener)
                 val source = episodeSource(remote, requestedId)
                 p.setMediaSource(source)
-                p.seekTo(position.coerceAtLeast(0))
+                p.seekTo(effPosition.coerceAtLeast(0))
                 p.prepare()
                 p.playWhenReady =
                     foreground && requestedAutoplay && !pausedForLifecycle && episodePanel == null
@@ -3862,7 +3884,8 @@ class MainActivity : Activity() {
                         .build(),
                 )
         p.setMediaSource(source)
-        p.seekTo(position.coerceAtLeast(0))
+        val effPosition = if (position < skipIntroSeconds * 1000L) (skipIntroSeconds * 1000L) else position
+        p.seekTo(effPosition.coerceAtLeast(0))
         p.prepare()
         p.playWhenReady = foreground && requestedAutoplay && !pausedForLifecycle
     }
@@ -4575,6 +4598,30 @@ class MainActivity : Activity() {
             if (anchor.tag != "playback-settings") anchor.text = "全屏旋转  ·  ${fullUiRotation}°"
         }, onBack = if (anchor.tag == "playback-settings") ({ showPlaybackSettings(anchor) }) else null)
     }
+    private fun showSkipIntroPicker(anchor: TextView) {
+        val options = listOf("关闭") + (1..30).map { "${it} 秒" }
+        val currentIdx = skipIntroSeconds.coerceIn(0, 30)
+        tvTools.choose("全局跳过片头", options, anchor, { index ->
+            skipIntroSeconds = index
+            if (anchor.tag != "playback-settings") {
+                anchor.text = "跳过片头  ·  ${if (skipIntroSeconds == 0) "关闭" else "${skipIntroSeconds} 秒"}"
+            } else {
+                showPlaybackSettings(anchor)
+            }
+        }, selected = currentIdx, onBack = if (anchor.tag == "playback-settings") ({ showPlaybackSettings(anchor) }) else null)
+    }
+    private fun showSkipOutroPicker(anchor: TextView) {
+        val options = listOf("关闭") + (1..30).map { "${it} 秒" }
+        val currentIdx = skipOutroSeconds.coerceIn(0, 30)
+        tvTools.choose("全局跳过片尾", options, anchor, { index ->
+            skipOutroSeconds = index
+            if (anchor.tag != "playback-settings") {
+                anchor.text = "跳过片尾  ·  ${if (skipOutroSeconds == 0) "关闭" else "${skipOutroSeconds} 秒"}"
+            } else {
+                showPlaybackSettings(anchor)
+            }
+        }, selected = currentIdx, onBack = if (anchor.tag == "playback-settings") ({ showPlaybackSettings(anchor) }) else null)
+    }
     private fun showRotationPicker(anchor: TextView) {
         tvTools.choose("画面旋转 · 仅旋转视频",VideoRotation.options.map { "${it}°" },anchor,{ index ->
             val previous=library.videoRotation; val next=VideoRotation.options[index]
@@ -4726,6 +4773,8 @@ class MainActivity : Activity() {
             "定时 ${sleepTimer.label()}", "从头播放", "高级设置",
             "画面旋转 ${library.videoRotation}°",
             "全屏旋转 ${fullUiRotation}°",
+            "跳过片头 ${if (skipIntroSeconds == 0) "关闭" else "${skipIntroSeconds} 秒"}",
+            "跳过片尾 ${if (skipOutroSeconds == 0) "关闭" else "${skipOutroSeconds} 秒"}",
             "常驻播放进度 ${if (library.alwaysShowProgress) "开启" else "关闭"}",
         ), anchor, { choice ->
             main.post {
@@ -4737,7 +4786,9 @@ class MainActivity : Activity() {
                     4 -> showAdvancedPlaybackSettings(anchor)
                     5 -> showRotationPicker(anchor)
                     6 -> showFullRotationPicker(anchor)
-                    7 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
+                    7 -> showSkipIntroPicker(anchor)
+                    8 -> showSkipOutroPicker(anchor)
+                    9 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
                 }
             }
         })

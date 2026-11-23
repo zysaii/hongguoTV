@@ -64,11 +64,11 @@ android {
         getByName("debug") {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug.20261114"
-            manifestPlaceholders["appLabel"] = "hongguoTV"
+            manifestPlaceholders["appLabel"] = "hongguoTV-zy"
         }
         getByName("release") {
             applicationIdSuffix = ".custom"
-            manifestPlaceholders["appLabel"] = "hongguoTV定制版"
+            manifestPlaceholders["appLabel"] = "hongguoTV-zy"
             signingConfig = signingConfigs.getByName("delivery")
             isMinifyEnabled = true
             proguardFiles(
