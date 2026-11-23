@@ -67,6 +67,8 @@ android {
             manifestPlaceholders["appLabel"] = "hongguoTV"
         }
         getByName("release") {
+            applicationIdSuffix = ".custom"
+            manifestPlaceholders["appLabel"] = "hongguoTV定制版"
             signingConfig = signingConfigs.getByName("delivery")
             isMinifyEnabled = true
             proguardFiles(
