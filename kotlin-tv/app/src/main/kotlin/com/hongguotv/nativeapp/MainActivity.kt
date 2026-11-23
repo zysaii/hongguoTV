@@ -454,6 +454,8 @@ class MainActivity : Activity() {
     private var fullUiRotation: Int
         get() = customPrefs.getInt("fullUiRotation", 0)
         set(value) = customPrefs.edit().putInt("fullUiRotation", value).apply()
+    private val effectiveRotation: Int
+        get() = if (fullUiRotation != 0) fullUiRotation else library.videoRotation
     private var skipIntroSeconds: Int
         get() = customPrefs.getInt("skipIntroSeconds", 0)
         set(value) = customPrefs.edit().putInt("skipIntroSeconds", value).apply()
@@ -2968,7 +2970,7 @@ class MainActivity : Activity() {
         val keepRecoveryStatus = recovering || (screen == "player" && playError && index == episodeIndex)
         val reuse =
             screen == "player" && player != null && playerView != null && (!playError || recovering) && !recreateView
-                && ((playerView?.videoSurfaceView is TextureView) == VideoRotation.usesTexture(library.videoRotation))
+                && ((playerView?.videoSurfaceView is TextureView) == VideoRotation.usesTexture(effectiveRotation))
         library.setWatched(data.series.id, false)
         val selectedIndex = index.coerceIn(0, data.episodes.lastIndex)
         if (
@@ -3071,7 +3073,7 @@ class MainActivity : Activity() {
             root.removeAllViews()
             root.setBackgroundColor(Color.BLACK)
             val view =
-                (if (VideoRotation.usesTexture(library.videoRotation))
+                (if (VideoRotation.usesTexture(effectiveRotation))
                     layoutInflater.inflate(R.layout.video_player, root, false) as PlayerView else PlayerView(this)).apply {
                     useController = false
                     resizeMode = frameResizeMode()
@@ -4583,9 +4585,10 @@ class MainActivity : Activity() {
         tvTools.choose("全屏旋转 · 画面+弹幕+进度条", VideoRotation.options.map { "${it}°" }, anchor, { index ->
             val next = VideoRotation.options[index]
             if (fullUiRotation == next) return@choose
-            val previous = fullUiRotation
+            val previousEffective = effectiveRotation
             fullUiRotation = next
-            val rebuild = screen == "player" && playerView != null && VideoRotation.requiresSurfaceRebuild(previous, next)
+            val nextEffective = effectiveRotation
+            val rebuild = screen == "player" && playerView != null && VideoRotation.requiresSurfaceRebuild(previousEffective, nextEffective)
             val selectedEpisode = episodeIndex; val position = currentPosition()
             val autoplay = if (playbackReady) player?.playWhenReady ?: requestedAutoplay else requestedAutoplay
             val ticket = generation
@@ -4624,13 +4627,14 @@ class MainActivity : Activity() {
     }
     private fun showRotationPicker(anchor: TextView) {
         tvTools.choose("画面旋转 · 仅旋转视频",VideoRotation.options.map { "${it}°" },anchor,{ index ->
-            val previous=library.videoRotation; val next=VideoRotation.options[index]
-            if(previous==next) return@choose
-            val rebuild=screen=="player" && playerView!=null && VideoRotation.requiresSurfaceRebuild(previous,next)
-            val selectedEpisode=episodeIndex; val position=currentPosition()
-            val autoplay=if(playbackReady) player?.playWhenReady ?: requestedAutoplay else requestedAutoplay
-            val ticket=generation
-            library.videoRotation=next
+            val previousEffective = effectiveRotation; val next = VideoRotation.options[index]
+            if(library.videoRotation == next) return@choose
+            library.videoRotation = next
+            val nextEffective = effectiveRotation
+            val rebuild = screen == "player" && playerView != null && VideoRotation.requiresSurfaceRebuild(previousEffective, nextEffective)
+            val selectedEpisode = episodeIndex; val position = currentPosition()
+            val autoplay = if (playbackReady) player?.playWhenReady ?: requestedAutoplay else requestedAutoplay
+            val ticket = generation
             if(rebuild) {
                 // Let the picker finish dismissal before replacing its anchor and the video view.
                 // Rebuild only for a SurfaceView/TextureView transition, never on a layout callback.
