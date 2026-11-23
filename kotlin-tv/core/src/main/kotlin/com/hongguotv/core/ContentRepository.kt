@@ -989,18 +989,6 @@ constructor(
                 if (speculative) throw empty
                 RequestScope.ensureActive()
                 onPrimaryEmpty?.invoke()
-
-                // 优先尝试 jackotom 8.0 针对全链路空响应的单集接口回退
-                for (singleHost in MobilePlayback.SINGLE_MODEL_HOSTS) {
-                    try {
-                        return@withDeadline MobilePlayback.singleVideoModelLadder(
-                            id, profile.values, http, MobilePlayback.signer, clock(), host = singleHost,
-                        )
-                    } catch (_: Exception) {
-                        RequestScope.ensureActive()
-                    }
-                }
-
                 val transport = http.newBuilder().cookieJar(CookieJar.NO_COOKIES).build()
                 val trace = PlaybackRequestTrace()
                 val entry = try {
