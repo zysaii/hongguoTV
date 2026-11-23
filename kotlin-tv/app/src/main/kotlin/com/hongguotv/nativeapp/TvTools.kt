@@ -24,6 +24,7 @@ import java.util.concurrent.Executors
 
 /** Native modal controls kept separate from catalog/player navigation. */
 class TvTools(private val activity: Activity) {
+    var rotationProvider: (() -> Int)? = null
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var dialog: AlertDialog? = null
@@ -80,6 +81,10 @@ class TvTools(private val activity: Activity) {
             }
         next.window?.setBackgroundDrawable(TvVisual.panel(activity, modal = true))
         next.window?.setDimAmount(.6f)
+        val rot = rotationProvider?.invoke() ?: 0
+        if (rot != 0) {
+            next.window?.decorView?.rotation = rot.toFloat()
+        }
     }
 
     internal fun dispatchPhoneKey(event: android.view.KeyEvent): Boolean {

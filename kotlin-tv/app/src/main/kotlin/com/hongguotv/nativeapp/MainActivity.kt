@@ -449,6 +449,8 @@ class MainActivity : Activity() {
     private lateinit var hud: LinearLayout
     private var seekHint: TextView? = null
     private var persistentBar: ProgressBar? = null
+    private var hudContainer: FrameLayout? = null
+    private var hudScroll: ScrollView? = null
     private var playerGestureDetector: GestureDetector? = null
     private val customPrefs by lazy { getSharedPreferences("custom_settings", Context.MODE_PRIVATE) }
     private var fullUiRotation: Int
@@ -652,7 +654,9 @@ class MainActivity : Activity() {
                 View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         library = Library(this)
         artwork = ArtworkLoader(this)
-        tvTools = TvTools(this)
+        tvTools = TvTools(this).apply {
+            rotationProvider = { if (screen == "player") fullUiRotation else 0 }
+        }
         root = FrameLayout(this).apply { background = TvVisual.backdrop(this@MainActivity) }
         setContentView(root)
         CodecCapabilities.init(this)
@@ -3094,12 +3098,15 @@ class MainActivity : Activity() {
                 visibility = View.GONE
             }
             root.addView(persistentBar, FrameLayout.LayoutParams(-1, dp(3), Gravity.BOTTOM))
+            val overlayContainer = FrameLayout(this)
+            hudContainer = overlayContainer
+            root.addView(overlayContainer, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
             seekHint = text("", 18f, Color.WHITE).apply {
                 setPadding(dp(10), dp(4), dp(10), dp(4))
                 background = rounded(Color.argb(150, 11, 15, 21))
                 visibility = View.GONE
             }
-            root.addView(seekHint, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+            overlayContainer.addView(seekHint, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
             social.attach(root)
             playbackClock = TextClock(this).apply {
                 format12Hour = "HH:mm"
@@ -3110,7 +3117,7 @@ class MainActivity : Activity() {
                 background = rounded(Color.argb(150, 11, 15, 21))
                 isFocusable = false
             }.also { clock ->
-                root.addView(clock, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                overlayContainer.addView(clock, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
                     topMargin = (resources.displayMetrics.heightPixels * .05f).toInt()
                     rightMargin = dp(widthDp() * .05f)
                 })
@@ -3156,11 +3163,13 @@ class MainActivity : Activity() {
                     visibility = View.GONE
                 }
             hud.addView(controls)
-            root.addView(
-                ScrollView(this).apply {
-                    isVerticalScrollBarEnabled = false
-                    addView(hud)
-                },
+            val scroll = ScrollView(this).apply {
+                isVerticalScrollBarEnabled = false
+                addView(hud)
+            }
+            hudScroll = scroll
+            overlayContainer.addView(
+                scroll,
                 FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM),
             )
         }
@@ -4556,6 +4565,16 @@ class MainActivity : Activity() {
         view.rotation=effDeg.toFloat()
         if (fullUiRotation != 0) {
             social.applyRotation(fullUiRotation, canvas.width, canvas.height)
+            hudContainer?.let { hc ->
+                val p = hc.layoutParams as? FrameLayout.LayoutParams
+                if (p != null && (p.width != canvas.width || p.height != canvas.height || p.gravity != Gravity.CENTER)) {
+                    p.width = canvas.width
+                    p.height = canvas.height
+                    p.gravity = Gravity.CENTER
+                    hc.layoutParams = p
+                }
+                hc.rotation = fullUiRotation.toFloat()
+            }
             persistentBar?.let { bar ->
                 val p = bar.layoutParams as? FrameLayout.LayoutParams
                 if (p != null) {
@@ -4570,6 +4589,16 @@ class MainActivity : Activity() {
             }
         } else {
             social.applyRotation(0, root.width, root.height)
+            hudContainer?.let { hc ->
+                val p = hc.layoutParams as? FrameLayout.LayoutParams
+                if (p != null && (p.width != -1 || p.height != -1 || p.gravity != Gravity.CENTER)) {
+                    p.width = -1
+                    p.height = -1
+                    p.gravity = Gravity.CENTER
+                    hc.layoutParams = p
+                }
+                hc.rotation = 0f
+            }
             persistentBar?.let { bar ->
                 val p = bar.layoutParams as? FrameLayout.LayoutParams
                 if (p != null && (p.width != -1 || p.gravity != Gravity.BOTTOM)) {
@@ -5029,6 +5058,8 @@ class MainActivity : Activity() {
         playerView = null
         seekHint = null
         persistentBar = null
+        hudContainer = null
+        hudScroll = null
         player?.release()
         player = null
         playbackReady = false
@@ -5179,11 +5210,25 @@ class MainActivity : Activity() {
         })
     }
 
+    private fun isTouchInsideView(view: View?, ev: MotionEvent): Boolean {
+        val v = view ?: return false
+        if (!v.isAttachedToWindow || v.visibility != View.VISIBLE) return false
+        val location = IntArray(2)
+        v.getLocationOnScreen(location)
+        val x = ev.rawX
+        val y = ev.rawY
+        return x >= location[0] && x <= location[0] + v.width && y >= location[1] && y <= location[1] + v.height
+    }
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (screen == "player" && !playerModalOpen()) {
             if (playerGestureDetector == null) setupTouchGestures()
-            val handled = playerGestureDetector?.onTouchEvent(ev) == true
-            if (handled) return true
+            // When controls panel is showing, let touches on controls/hud go directly to child views (buttons)
+            val inHud = panel && hud.visibility == View.VISIBLE && isTouchInsideView(hudScroll, ev)
+            if (!inHud) {
+                val handled = playerGestureDetector?.onTouchEvent(ev) == true
+                if (handled) return true
+            }
         }
         return super.dispatchTouchEvent(ev)
     }
