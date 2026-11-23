@@ -450,7 +450,10 @@ class MainActivity : Activity() {
     private var seekHint: TextView? = null
     private var persistentBar: ProgressBar? = null
     private var playerGestureDetector: GestureDetector? = null
-    private var fullUiRotation = 0
+    private val customPrefs by lazy { getSharedPreferences("custom_settings", Context.MODE_PRIVATE) }
+    private var fullUiRotation: Int
+        get() = customPrefs.getInt("fullUiRotation", 0)
+        set(value) = customPrefs.edit().putInt("fullUiRotation", value).apply()
     private lateinit var playbackText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var controls: LinearLayout
@@ -2407,6 +2410,8 @@ class MainActivity : Activity() {
                     frame = setting("画面模式  ·  ${library.frameMode.label}") { showFramePicker(frame, false) }
                     lateinit var rotationButton: TextView
                     rotationButton = setting("画面旋转  ·  ${library.videoRotation}°") { showRotationPicker(rotationButton) }
+                    lateinit var fullRotationButton: TextView
+                    fullRotationButton = setting("全屏旋转  ·  ${fullUiRotation}°") { showFullRotationPicker(fullRotationButton) }
                     toggle("常驻播放进度", library.alwaysShowProgress) { library.alwaysShowProgress = it }
                     toggle("自动连播", library.autoNext) { library.autoNext = it }
                     toggle("跨季自动连播（需开启自动连播）", library.seasonAutoplay) { library.seasonAutoplay = it }
