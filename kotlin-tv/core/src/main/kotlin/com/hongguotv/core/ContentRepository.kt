@@ -1024,6 +1024,16 @@ constructor(
                     )
                 } catch (alternate: IOException) {
                     RequestScope.ensureActive()
+                    // jackotom 8.0: 如果主接口、tab 接口以及备用主机都失败/空响应，尝试 single_model 路由
+                    for (singleHost in MobilePlayback.SINGLE_MODEL_HOSTS) {
+                        try {
+                            return@withDeadline MobilePlayback.singleVideoModelLadder(
+                                id, profile.values, http, MobilePlayback.signer, clock(), host = singleHost,
+                            )
+                        } catch (_: Exception) {
+                            RequestScope.ensureActive()
+                        }
+                    }
                     alternate.addSuppressed(empty)
                     alternate.addSuppressed(
                         PlaybackDiagnosticException(

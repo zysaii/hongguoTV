@@ -22,6 +22,10 @@ internal fun interface MobilePlaybackSigner {
 
 internal object MobilePlayback {
     private const val PRIMARY_MODEL_HOST = "api5-normal-sinfonlinea.fqnovel.com"
+    val SINGLE_MODEL_HOSTS = listOf(
+        "api5-normal-sinfonlinea.fqnovel.com",
+        "api5-normal-sinfonlinec.fqnovel.com",
+    )
     private val v5Signer = Signer(mobileV5 = true)
     val signer = MobilePlaybackSigner { url, body, _ ->
         val parsed = url.toHttpUrl()
@@ -121,6 +125,58 @@ internal object MobilePlayback {
                 ?: throw PlaybackSourceException(PlaybackSourceException.Reason.INVALID_RESPONSE)
             val entries = data.optJSONObject("1004") ?: data
             val model = PlaybackModels.objectValue(entries.optJSONObject(id)?.opt("video_model"))
+                ?: throw PlaybackSourceException(PlaybackSourceException.Reason.NO_PLAYABLE_SOURCE)
+            val rows = PlaybackModels.renditions(model)
+            if (rows.isEmpty()) throw PlaybackSourceException(PlaybackSourceException.Reason.NO_PLAYABLE_SOURCE)
+            StreamLadder(rows)
+        }
+    }
+
+    /**
+     * jackotom 8.0: /novel/player/video_model/v1/ 单集接口回退
+     * 当 multi_video_model 与 video_tab 均返回空响应时使用
+     */
+    fun singleVideoModelLadder(
+        id: String,
+        device: Map<String, String>,
+        http: OkHttpClient,
+        signer: MobilePlaybackSigner,
+        now: Long,
+        host: String,
+    ): StreamLadder {
+        require(id.matches(Regex("[0-9]{1,30}")))
+        RequestScope.ensureActive()
+        val query = query(device) + ("_rticket" to now.toString())
+        val url = "https://$host/novel/player/video_model/v1/"
+            .toHttpUrl().newBuilder().apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
+        val payload = JSONObject("""{"biz_param":{"detail_page_version":0,"device_level":3,"disable_digg_stat":false,"from_video_id":"","need_all_video_definition":true,"need_mp4_align":false,"source":9,"use_os_player":false,"use_server_dns":false,"video_platform":3},"content_type":1004,"video_id":"$id"}""")
+        val output = ByteArrayOutputStream()
+        GZIPOutputStream(output).use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+        val bytes = output.toByteArray()
+        val request = Request.Builder().url(url)
+            .header("User-Agent", "com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)")
+            .header("Accept", "application/json").header("Content-Encoding", "gzip")
+            .header("x-ss-stub", MessageDigest.getInstance("MD5").digest(bytes).joinToString("") { "%02X".format(it) })
+        val signed = signer.sign(url.toString(), bytes, device)
+        request.url(signed.url)
+        signed.headers.forEach { (k, v) -> request.header(k, v) }
+        RequestScope.ensureActive()
+        request.post(bytes.toRequestBody("application/json; charset=utf-8".toMediaType()))
+        val transport = http.newBuilder().cookieJar(CookieJar.NO_COOKIES).build()
+        return RequestScope.execute(transport.newCall(request.build())) { response ->
+            if (!response.isSuccessful) throw PlaybackSourceException(PlaybackSourceException.Reason.HTTP_REJECTED, response.code)
+            val body = response.body ?: throw PlaybackSourceException(PlaybackSourceException.Reason.INVALID_RESPONSE)
+            val text = body.string()
+            if (text.isBlank()) throw EmptyPlaybackResponseException("stage=single-video-model")
+            val root = try { JSONObject(text) } catch (_: Exception) {
+                throw PlaybackSourceException(PlaybackSourceException.Reason.INVALID_RESPONSE)
+            }
+            PlaybackModels.checkStatus(root)
+            val data = root.optJSONObject("data")
+                ?: throw PlaybackSourceException(PlaybackSourceException.Reason.INVALID_RESPONSE)
+            val entries = data.optJSONObject("1004") ?: data.optJSONObject("video_model_data") ?: data
+            val model = PlaybackModels.objectValue(entries.optJSONObject(id)?.opt("video_model"))
+                ?: PlaybackModels.objectValue(entries.opt("video_model"))
                 ?: throw PlaybackSourceException(PlaybackSourceException.Reason.NO_PLAYABLE_SOURCE)
             val rows = PlaybackModels.renditions(model)
             if (rows.isEmpty()) throw PlaybackSourceException(PlaybackSourceException.Reason.NO_PLAYABLE_SOURCE)
