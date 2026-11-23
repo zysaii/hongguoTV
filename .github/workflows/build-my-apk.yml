@@ -40,11 +40,13 @@ jobs:
         run: |
           chmod +x ./kotlin-tv/gradlew
           ./kotlin-tv/gradlew -p kotlin-tv :app:assembleDebug --console=plain
+          echo "=== Built APK files ==="
+          find kotlin-tv/app/build -name "*.apk" -ls
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: hongguoTV-custom-apk
-          path: kotlin-tv/app/build/outputs/apk/debug/*.apk
+          path: kotlin-tv/app/build/**/*.apk
           retention-days: 30
 
