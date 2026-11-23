@@ -28,25 +28,30 @@ jobs:
         run: |
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
-      - name: Ensure deterministic debug keystore
+      - name: Ensure deterministic release keystore
         run: |
           mkdir -p ~/.android
           keytool -genkeypair -noprompt -storetype PKCS12 \
-            -keystore ~/.android/debug.keystore -storepass android -keypass android \
-            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname 'CN=Android Debug,O=Android,C=US'
+            -keystore ~/.android/custom_release.jks -storepass hongguotv -keypass hongguotv \
+            -alias customkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname 'CN=HongguoTV Custom,O=Custom,C=CN'
 
-      - name: Build Debug APK
+      - name: Build Optimized Release APK
+        env:
+          HONGGUOTV_KEYSTORE: /home/runner/.android/custom_release.jks
+          HONGGUOTV_STORE_PASSWORD: hongguotv
+          HONGGUOTV_KEY_ALIAS: customkey
+          HONGGUOTV_KEY_PASSWORD: hongguotv
         run: |
           chmod +x ./kotlin-tv/gradlew
-          ./kotlin-tv/gradlew -p kotlin-tv :app:assembleDebug --console=plain
+          ./kotlin-tv/gradlew -p kotlin-tv :app:assembleRelease --console=plain
           echo "=== Built APK files ==="
           find kotlin-tv/app/build -name "*.apk" -ls
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hongguoTV-custom-apk
+          name: hongguoTV-custom-release-apk
           path: kotlin-tv/app/build/**/*.apk
           retention-days: 30
 
