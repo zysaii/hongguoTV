@@ -28,6 +28,14 @@ jobs:
         run: |
           sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
 
+      - name: Ensure deterministic debug keystore
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -noprompt -storetype PKCS12 \
+            -keystore ~/.android/debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname 'CN=Android Debug,O=Android,C=US'
+
       - name: Build Debug APK
         run: |
           chmod +x ./kotlin-tv/gradlew
@@ -39,3 +47,4 @@ jobs:
           name: hongguoTV-custom-apk
           path: kotlin-tv/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
