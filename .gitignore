@@ -21,6 +21,7 @@ __pycache__/
 .env.*
 !.env.example
 *.jks
+!release.jks
 *.keystore
 keystore.properties
 
