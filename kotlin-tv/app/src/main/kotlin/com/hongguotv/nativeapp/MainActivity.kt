@@ -5213,22 +5213,29 @@ class MainActivity : Activity() {
     private fun isTouchInsideView(view: View?, ev: MotionEvent): Boolean {
         val v = view ?: return false
         if (!v.isAttachedToWindow || v.visibility != View.VISIBLE) return false
+        val rect = android.graphics.Rect()
+        if (v.getGlobalVisibleRect(rect)) {
+            if (rect.contains(ev.rawX.toInt(), ev.rawY.toInt())) return true
+        }
         val location = IntArray(2)
         v.getLocationOnScreen(location)
-        val x = ev.rawX
-        val y = ev.rawY
-        return x >= location[0] && x <= location[0] + v.width && y >= location[1] && y <= location[1] + v.height
+        return ev.rawX >= location[0] && ev.rawX <= location[0] + v.width &&
+               ev.rawY >= location[1] && ev.rawY <= location[1] + v.height
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (screen == "player" && !playerModalOpen()) {
             if (playerGestureDetector == null) setupTouchGestures()
-            // When controls panel is showing, let touches on controls/hud go directly to child views (buttons)
-            val inHud = panel && hud.visibility == View.VISIBLE && isTouchInsideView(hudScroll, ev)
-            if (!inHud) {
-                val handled = playerGestureDetector?.onTouchEvent(ev) == true
-                if (handled) return true
+            // When panel is showing, check if touch falls inside controls or hud
+            val inControls = panel && controls.visibility == View.VISIBLE && (isTouchInsideView(controls, ev) || isTouchInsideView(hudScroll, ev))
+            if (inControls) {
+                // Keep overlay alive while user touches controls
+                main.removeCallbacks(hideHud)
+                // Let the touch pass directly to buttons/scrollview without gesture interception
+                return super.dispatchTouchEvent(ev)
             }
+            val handled = playerGestureDetector?.onTouchEvent(ev) == true
+            if (handled) return true
         }
         return super.dispatchTouchEvent(ev)
     }
