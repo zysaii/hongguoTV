@@ -21,9 +21,15 @@ jobs:
           # 必须获取完整历史记录，否则无法与上游合并
           fetch-depth: 0
 
-      - name: Sync with upstream
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 使用 PAT 替代默认 token，这样推送的 commit/tag 才能触发其他 Actions
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Sync with upstream & trigger release
         env:
-          # 请将下方替换为真实的上游仓库地址
           UPSTREAM_URL: https://github.com/N3urda/hongguoTV.git
           BRANCH: main
         run: |
@@ -31,11 +37,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
           git remote add upstream "$UPSTREAM_URL"
-          git fetch upstream
+          # 连同上游的 tags 一起拉取
+          git fetch upstream --tags
           git checkout "$BRANCH"
-          
-          # 合并上游更新（若希望完全覆盖本地修改，可改为 git reset --hard upstream/$BRANCH）
           git merge "upstream/$BRANCH" --no-edit
           
-          # 推送到你的 Fork 仓库
+          # 推送代码和新增的 tags（新 tag 会直接触发原有的 Release 工作流）
           git push origin "$BRANCH"
+          git push origin --tags
