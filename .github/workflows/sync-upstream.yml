@@ -1,0 +1,41 @@
+name: Sync Upstream
+
+on:
+  # 1. 定时自动触发：每天 UTC 时间 0 点（北京时间 8 点）执行一次
+  schedule:
+    - cron: '0 0 * * *'
+  # 2. 手动触发：允许在网页端 Actions 页面点击按钮立即执行
+  workflow_dispatch:
+
+# 赋予工作流写入仓库代码的权限
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # 必须获取完整历史记录，否则无法与上游合并
+          fetch-depth: 0
+
+      - name: Sync with upstream
+        env:
+          # 请将下方替换为真实的上游仓库地址
+          UPSTREAM_URL: https://github.com/上游用户名/上游仓库名.git
+          BRANCH: main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream
+          git checkout "$BRANCH"
+          
+          # 合并上游更新（若希望完全覆盖本地修改，可改为 git reset --hard upstream/$BRANCH）
+          git merge "upstream/$BRANCH" --no-edit
+          
+          # 推送到你的 Fork 仓库
+          git push origin "$BRANCH"
