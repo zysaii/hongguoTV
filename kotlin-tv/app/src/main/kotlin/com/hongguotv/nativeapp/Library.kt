@@ -50,7 +50,7 @@ class Library(context: Context) {
             failed = { Log.w("HongguoTV", "Home cache commit failed") },
         )
     private var index: LibraryIndex? = null
-    private var viewing = ViewingPreferences()
+    @Volatile private var viewing = ViewingPreferences()
 
     var startupPage: Int
         get() = viewing.startupPage
@@ -63,6 +63,12 @@ class Library(context: Context) {
         set(value) {
             viewing = viewing.copy(seasonAutoplay = value)
             put("seasonAutoplay", value)
+        }
+    internal var videoDecoderMode: VideoDecoderMode
+        get() = viewing.videoDecoderMode
+        set(value) {
+            viewing = viewing.copy(videoDecoderMode = value)
+            put("videoDecoderMode", value.name)
         }
     var homeAutoplay: Boolean
         get() = viewing.homeAutoplay

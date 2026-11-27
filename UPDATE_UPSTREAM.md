@@ -33,10 +33,12 @@ git merge upstream/main
 git push origin my-custom
 ```
 
-### 一行快捷版（确认当前就在 `my-custom` 且工作区无未提交修改时）
+### 一行快捷版
+
+> Windows PowerShell 5.1 不支持 `&&`，请使用下方**分号 `;` 版本**；若使用 Git Bash 或 PowerShell 7+，可将 `;` 替换为 `&&`。
 
 ```powershell
-git fetch upstream && git checkout main && git merge --ff-only upstream/main && git push origin main && git checkout my-custom && git merge upstream/main && git push origin my-custom
+git fetch upstream; git checkout main; git merge --ff-only upstream/main; git push origin main; git checkout my-custom; git merge upstream/main; git push origin my-custom
 ```
 
 ---

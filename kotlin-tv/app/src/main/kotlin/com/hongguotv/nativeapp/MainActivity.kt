@@ -128,7 +128,8 @@ class MainActivity : Activity() {
             "quality" -> {
                 val quality = body.getInt("value")
                 require(quality in PlaybackQuality.options)
-                if (library.maxQuality != quality) {
+                if (library.maxQuality != quality || softwareQualityLimitedEpisode != null) {
+                    softwareQualityLimitedEpisode = null
                     library.maxQuality = quality
                     playEpisode(episodeIndex, currentPosition(), player?.playWhenReady ?: requestedAutoplay)
                 }
@@ -443,6 +444,7 @@ class MainActivity : Activity() {
     private var group = 0
     private var synopsisExpanded = false
     private var player: ExoPlayer? = null
+    private var playerDiagnostics: PlaybackDiagnostics? = null
     private var video: RemoteVideo? = null
     private var playbackReady = false
     private var pausedForLifecycle = false
@@ -471,6 +473,7 @@ class MainActivity : Activity() {
     private var panel = false
     // Consume the entire shortcut press, even when ACTION_DOWN opens a focusable panel.
     private val playerShortcutKeys = mutableSetOf<Int>()
+    private var playerBackDownTime: Long? = null
     private var pendingEpisodeTarget: Int? = null
     private var pendingEpisodeSwitch: Runnable? = null
     private var automaticEpisodeFrom = -1
@@ -502,6 +505,7 @@ class MainActivity : Activity() {
     private var currentRendition: Rendition? = null
     private var currentTiers: List<Rendition> = emptyList()
     private var autoDowngrades = 0
+    private var softwareQualityLimitedEpisode: String? = null
     private val stallGuard = PlaybackStallGuard()
     private var lastPlaybackDiagnosticAt = 0L
     private val tick =
@@ -831,6 +835,7 @@ class MainActivity : Activity() {
     private fun invalidatePage() {
         cancelEpisodeSwitch()
         cancelNextSeason()
+        playerBackDownTime = null
         generation++
         cancelWork()
         artwork.cancelPage()
@@ -1166,7 +1171,7 @@ class MainActivity : Activity() {
                         startupCache = cloudAccount.recommendationStartupCache(),
                         recentSources = recentPlaybackSources,
                     ),
-                    Media3TrialPlayback(this, library.playbackSpeed, library.frameMode),
+                    Media3TrialPlayback(this, library.playbackSpeed, library.frameMode) { library.videoDecoderMode },
                     autoPreview = library.homeAutoplay,
                     backgroundBusy = { gradualPreloader?.busy == true },
                     loadCover = ::loadCover,
@@ -2420,6 +2425,19 @@ class MainActivity : Activity() {
                     })
                     lateinit var updates: TextView
                     updates = setting("检查更新") { updater.show(updates) }
+                    lateinit var route: TextView
+                    route = setting("更新线路  ·  ${updater.updateRoute.label}") {
+                        tvTools.choose(
+                            title = "更新线路",
+                            labels = AppUpdateRoute.entries.map { it.label },
+                            anchor = route,
+                            onChoice = { index ->
+                                updater.updateRoute = AppUpdateRoute.entries[index]
+                                route.text = "更新线路  ·  ${updater.updateRoute.label}"
+                            },
+                            selected = updater.updateRoute.ordinal,
+                        )
+                    }
                 }
                 1 -> {
                     lateinit var qualityButton: TextView
@@ -2432,6 +2450,8 @@ class MainActivity : Activity() {
                     frame = setting("画面模式  ·  ${library.frameMode.label}") { showFramePicker(frame, false) }
                     lateinit var rotationButton: TextView
                     rotationButton = setting("画面旋转  ·  ${library.videoRotation}°") { showRotationPicker(rotationButton) }
+                    lateinit var decoder: TextView
+                    decoder = setting("解码方式  ·  ${library.videoDecoderMode.label}") { showVideoDecoderPicker(decoder, false) }
                     lateinit var fullRotationButton: TextView
                     fullRotationButton = setting("全屏旋转  ·  ${fullUiRotation}°") { showFullRotationPicker(fullRotationButton) }
                     lateinit var skipIntroBtn: TextView
@@ -2992,7 +3012,12 @@ class MainActivity : Activity() {
             player?.play()
             return
         }
-        val prepareKey = "${data.episodes[selectedIndex]}:${library.maxQuality}"
+        val requestedId = data.episodes[selectedIndex]
+        if (screen != "player" || softwareQualityLimitedEpisode != requestedId) softwareQualityLimitedEpisode = null
+        val requestedQuality = library.maxQuality
+        val maxQuality = if (softwareQualityLimitedEpisode == null) requestedQuality
+            else minOf(requestedQuality, SoftwareVideoFallback.QUALITY_LIMIT)
+        val prepareKey = "$requestedId:$maxQuality"
         // Retain a nearly completed prefetch while keeping most of the foreground deadline available.
         val pending =
             if (position == 0L && !recovering) claimPendingPreparation(prepareKey) else null
@@ -3193,8 +3218,6 @@ class MainActivity : Activity() {
             if (restoreControlTag != null) controls.findViewWithTag<View>(restoreControlTag)?.requestFocus()
         }
         syncMediaSession()
-        val requestedId = data.episodes[episodeIndex]
-        val maxQuality = library.maxQuality
         val ticket = generation
         var usedPending = false
         work(
@@ -3230,7 +3253,7 @@ class MainActivity : Activity() {
                 }
                 val remote = opened.video
                 video = remote
-                applyOpenedStream(opened, maxQuality)
+                applyOpenedStream(opened, requestedQuality)
                 val p =
                     ensurePlayer()
                 p.setPlaybackSpeed(library.playbackSpeed)
@@ -3620,6 +3643,7 @@ class MainActivity : Activity() {
             automaticEpisodeAt = android.os.SystemClock.uptimeMillis()
         }
         episodeIndex = queuedEpisode
+        softwareQualityLimitedEpisode = null
         group = episodeIndex / 20
         queuedNext = null
         queuedHttp = null
@@ -3798,6 +3822,27 @@ class MainActivity : Activity() {
         currentTiers = opened.tiers
     }
 
+    private fun lowerSoftwareVideoQuality(p: ExoPlayer) {
+        if (player !== p || !p.isPlaying || attemptedQuality <= SoftwareVideoFallback.QUALITY_LIMIT) return
+        val id = p.currentMediaItem?.mediaId ?: return
+        val ticket = generation
+        main.post {
+            if (player !== p || generation != ticket || !p.isPlaying || !foreground ||
+                !playbackReady || playError || waitingForFirstFrame || pendingSeek != null || pendingEpisodeTarget != null ||
+                playerModalOpen() || detail?.episodes?.getOrNull(episodeIndex) != id ||
+                p.currentMediaItem?.mediaId != id || softwareQualityLimitedEpisode == id
+            ) return@post
+            val hasLowerTier = currentTiers.any {
+                it.quality in 1..SoftwareVideoFallback.QUALITY_LIMIT && CodecCapabilities.supports(it)
+            }
+            if (!hasLowerTier) return@post
+
+            softwareQualityLimitedEpisode = id
+            android.util.Log.i("HongguoTV", "Reducing software HEVC playback from ${attemptedQuality}P after sustained dropped frames")
+            playEpisode(episodeIndex, currentPosition(), p.playWhenReady)
+        }
+    }
+
     /** 懒建播放器（正式路径与伴机路径共用）；已存在则原样返回。 */
     private fun ensurePlayer(): ExoPlayer =
         player
@@ -3814,10 +3859,13 @@ class MainActivity : Activity() {
                         )
                         .setTargetBufferBytes(12 * 1024 * 1024)
                         .build()
-                val renderers =
-                    playbackRenderers(this)
+                val diagnostics = PlaybackDiagnostics("player")
+                val renderers = playbackRenderers(this, diagnostics) { library.videoDecoderMode }
                 ExoPlayer.Builder(this, renderers).setLoadControl(load).build().also {
                     player = it
+                    playerDiagnostics = diagnostics
+                    // Buffer the start of the queued episode once current media loading settles.
+                    it.preloadConfiguration = ExoPlayer.PreloadConfiguration(2_000_000L)
                     it.addListener(bufferingIndicator)
                     playerView?.player = it
                     it.setAudioAttributes(
@@ -3828,8 +3876,11 @@ class MainActivity : Activity() {
                         true,
                     )
                     it.setHandleAudioBecomingNoisy(true)
-                    it.addAnalyticsListener(PlaybackDiagnostics("player"))
+                    it.addAnalyticsListener(diagnostics)
                     it.addAnalyticsListener(playbackDriftListener(it))
+                    if (Build.SUPPORTED_64_BIT_ABIS.isEmpty()) {
+                        it.addAnalyticsListener(SoftwareVideoFallback(it, diagnostics, ::lowerSoftwareVideoQuality))
+                    }
                 }
             }
 
@@ -4802,26 +4853,34 @@ class MainActivity : Activity() {
 
     private fun showPlaybackSettings(anchor: TextView) {
         tvTools.choose("更多设置", listOf(
-            "清晰度 ${library.maxQuality}P", "画面 ${library.frameMode.label}",
+            "清晰度 ${library.maxQuality}P", "解码方式 ${library.videoDecoderMode.label}",
+            "画面 ${library.frameMode.label}",
             "定时 ${sleepTimer.label()}", "从头播放", "高级设置",
             "画面旋转 ${library.videoRotation}°",
             "全屏旋转 ${fullUiRotation}°",
             "跳过片头 ${if (skipIntroSeconds == 0) "关闭" else "${skipIntroSeconds} 秒"}",
             "跳过片尾 ${if (skipOutroSeconds == 0) "关闭" else "${skipOutroSeconds} 秒"}",
             "常驻播放进度 ${if (library.alwaysShowProgress) "开启" else "关闭"}",
+            "播放信息",
         ), anchor, { choice ->
             main.post {
                 if (screen == "player" && anchor.isAttachedToWindow) when (choice) {
                     0 -> showQualityPicker(anchor, true)
-                    1 -> showFramePicker(anchor, true)
-                    2 -> showSleepPicker(anchor)
-                    3 -> { seekTo(0); hidePanel() }
-                    4 -> showAdvancedPlaybackSettings(anchor)
-                    5 -> showRotationPicker(anchor)
-                    6 -> showFullRotationPicker(anchor)
-                    7 -> showSkipIntroPicker(anchor)
-                    8 -> showSkipOutroPicker(anchor)
-                    9 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
+                    1 -> showVideoDecoderPicker(anchor, true)
+                    2 -> showFramePicker(anchor, true)
+                    3 -> showSleepPicker(anchor)
+                    4 -> { seekTo(0); hidePanel() }
+                    5 -> showAdvancedPlaybackSettings(anchor)
+                    6 -> showRotationPicker(anchor)
+                    7 -> showFullRotationPicker(anchor)
+                    8 -> showSkipIntroPicker(anchor)
+                    9 -> showSkipOutroPicker(anchor)
+                    10 -> { library.alwaysShowProgress = !library.alwaysShowProgress; updatePersistentProgress(); showPlaybackSettings(anchor) }
+                    11 -> {
+                        val format = if (playbackReady) player?.videoFormat else null
+                        val decoder = if (playbackReady) playerDiagnostics?.videoDecoder else null
+                        tvTools.info("播放信息", playbackVideoInfo(quality, format, decoder), anchor)
+                    }
                 }
             }
         })
@@ -4844,6 +4903,23 @@ class MainActivity : Activity() {
         }, onBack = { showPlaybackSettings(anchor) })
     }
 
+    private fun showVideoDecoderPicker(anchor: TextView, inPlayer: Boolean) {
+        val modes = VideoDecoderMode.entries
+        tvTools.choose("解码方式", modes.map { it.label }, anchor, { choice ->
+            val mode = modes[choice]
+            if (mode != library.videoDecoderMode) {
+                library.videoDecoderMode = mode
+                if (!inPlayer) {
+                    anchor.text = "解码方式  ·  ${mode.label}"
+                } else if (screen == "player" && anchor.isAttachedToWindow) {
+                    softwareQualityLimitedEpisode = null
+                    playEpisode(episodeIndex, currentPosition(), player?.playWhenReady ?: requestedAutoplay, recreateView = true)
+                }
+            }
+        }, selected = library.videoDecoderMode.ordinal,
+            onBack = if (inPlayer) ({ showPlaybackSettings(anchor) }) else null)
+    }
+
     private fun showSpeedPicker(anchor: TextView, inPlayer: Boolean = true) {
         val speeds = PlaybackSpeed.options
         tvTools.choose("全局默认倍速", speeds.map(PlaybackSpeed::label), anchor, { index ->
@@ -4859,7 +4935,8 @@ class MainActivity : Activity() {
         val options = PlaybackQuality.options
         tvTools.choose("全局默认清晰度", options.map { "${it}P" }, anchor, { index ->
             val target = options[index]
-            val changed = library.maxQuality != target
+            val changed = library.maxQuality != target || (inPlayer && softwareQualityLimitedEpisode != null)
+            if (inPlayer) softwareQualityLimitedEpisode = null
             library.maxQuality = target
             if (anchor.tag != "playback-settings")
                 anchor.text = (if (inPlayer) "清晰度 " else "默认清晰度  ·  ") + "${target}P"
@@ -5062,6 +5139,7 @@ class MainActivity : Activity() {
         hudScroll = null
         player?.release()
         player = null
+        playerDiagnostics = null
         playbackReady = false
         transportPlay = null
         sleepButton = null
@@ -5254,10 +5332,26 @@ class MainActivity : Activity() {
             return true
         }
         if (screen == "player") {
-            if (playerModalOpen()) return super.dispatchKeyEvent(event)
+            if (key == KeyEvent.KEYCODE_MENU) {
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
+                    !playerModalOpen() && !playerControlsOpen()
+                ) showPanel()
+                return true
+            }
+            if (playerModalOpen()) {
+                if (key == KeyEvent.KEYCODE_BACK) playerBackDownTime = null
+                return super.dispatchKeyEvent(event)
+            }
             if (panel && !playError && event.action == KeyEvent.ACTION_DOWN) showHud()
             if (key == KeyEvent.KEYCODE_BACK) {
-                if (event.action == KeyEvent.ACTION_UP) goBack()
+                when (event.action) {
+                    KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) playerBackDownTime = event.downTime
+                    KeyEvent.ACTION_UP -> {
+                        val paired = playerBackDownTime == event.downTime
+                        playerBackDownTime = null
+                        if (paired && !event.isCanceled) goBack()
+                    }
+                }
                 return true
             }
             if (
@@ -5296,7 +5390,6 @@ class MainActivity : Activity() {
                             KeyEvent.KEYCODE_ENTER,
                             KeyEvent.KEYCODE_DPAD_UP,
                             KeyEvent.KEYCODE_DPAD_DOWN,
-                            KeyEvent.KEYCODE_MENU,
                         )
                 ) {
                     if (event.action == KeyEvent.ACTION_DOWN) {
@@ -5312,7 +5405,6 @@ class MainActivity : Activity() {
                             }
                             KeyEvent.KEYCODE_DPAD_DOWN -> if (event.repeatCount == 0) skipEpisode(1, event.downTime)
                             KeyEvent.KEYCODE_DPAD_UP -> if (event.repeatCount == 0) skipEpisode(-1, event.downTime)
-                            KeyEvent.KEYCODE_MENU -> if (event.repeatCount == 0) showPanel()
                             else -> showHud()
                         }
                     }
@@ -5398,6 +5490,7 @@ class MainActivity : Activity() {
     override fun onPause() {
         cancelEpisodeSwitch()
         playerShortcutKeys.clear()
+        playerBackDownTime = null
         gradualPreloader?.pause()
         stallGuard.suspendObservation()
         cancelNextSeason()

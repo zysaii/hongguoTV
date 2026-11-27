@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ViewingPreferencesTest {
+    @Test fun preservesLegacySoftwareDecodingAndPrefersAnExplicitMode() {
+        assertEquals(VideoDecoderMode.AUTOMATIC, ViewingPreferences.decode(emptyMap<String, Any>()).videoDecoderMode)
+        assertEquals(VideoDecoderMode.SOFTWARE_ONLY, ViewingPreferences.decode(mapOf("forceSoftwareDecoding" to true)).videoDecoderMode)
+        assertEquals(VideoDecoderMode.AUTOMATIC, ViewingPreferences.decode(mapOf("forceSoftwareDecoding" to "true")).videoDecoderMode)
+        for (mode in VideoDecoderMode.entries) {
+            val saved = mapOf("videoDecoderMode" to mode.name, "forceSoftwareDecoding" to true)
+            assertEquals(mode, ViewingPreferences.decode(saved).videoDecoderMode)
+        }
+        val invalid = mapOf("videoDecoderMode" to "unknown", "forceSoftwareDecoding" to true)
+        assertEquals(VideoDecoderMode.SOFTWARE_ONLY, ViewingPreferences.decode(invalid).videoDecoderMode)
+    }
+
     @Test fun crossSeasonAutoplayIsOptInAndPersistsDecodedChoice() {
         assertFalse(ViewingPreferences.decode(emptyMap<String, Any>()).seasonAutoplay)
         assertTrue(ViewingPreferences.decode(mapOf("seasonAutoplay" to true)).seasonAutoplay)
